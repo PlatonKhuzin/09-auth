@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { parseSetCookie, serialize } from "cookie";
+import { parseSetCookie } from "cookie";
 import { checkSession } from "@/lib/api/serverApi";
 
 const privateRoutes = ["/notes", "/profile"];
@@ -9,82 +9,69 @@ const publicRoutes = ["/sign-in", "/sign-up"];
 export async function proxy(request: NextRequest) {
   const cookieStore = await cookies();
   const pathname = request.nextUrl.pathname;
-
   const isPrivate = privateRoutes.some(
     (route) => pathname === route || pathname.startsWith(`${route}/`),
   );
   const isPublic = publicRoutes.includes(pathname);
-
   const accessToken = cookieStore.get("accessToken")?.value;
   const refreshToken = cookieStore.get("refreshToken")?.value;
-
+  const cookieValues = new Map(
+    cookieStore.getAll().map(({ name, value }) => [name, value]),
+  );
   let authenticated = Boolean(accessToken);
-  const outgoingCookies: string[] = [];
+  let refreshedCookies: string[] = [];
 
   if (!accessToken && refreshToken) {
     try {
       const session = await checkSession(cookieStore.toString());
-
       if (session.data.success) {
         const rawCookies = session.headers["set-cookie"];
-
-        if (rawCookies) {
-          const cookieArray = Array.isArray(rawCookies)
+        refreshedCookies = rawCookies
+          ? Array.isArray(rawCookies)
             ? rawCookies
-            : [rawCookies];
-
-          for (const cookie of cookieArray) {
-            const { name, value, ...options } = parseSetCookie(cookie);
-
-            if (value) {
-              cookieStore.set(name, value, options);
-              outgoingCookies.push(serialize(name, value, options));
-            }
-          }
+            : [rawCookies]
+          : [];
+        for (const cookie of refreshedCookies) {
+          const { name, value } = parseSetCookie(cookie);
+          if (value) cookieValues.set(name, value);
         }
-
-        authenticated = Boolean(cookieStore.get("accessToken")?.value);
+        authenticated = Boolean(cookieValues.get("accessToken"));
       }
     } catch {
       authenticated = false;
     }
   }
 
-  if (!authenticated && (accessToken || refreshToken)) {
-    outgoingCookies.length = 0;
-
-    for (const name of ["accessToken", "refreshToken"]) {
-      cookieStore.delete(name);
-      outgoingCookies.push(
-        serialize(name, "", {
-          path: "/",
-          maxAge: 0,
-          expires: new Date(0),
-          httpOnly: true,
-          secure: request.nextUrl.protocol === "https:",
-          sameSite: "lax",
-        }),
-      );
-    }
+  const clearCookies = !authenticated && Boolean(accessToken || refreshToken);
+  if (clearCookies) {
+    cookieValues.delete("accessToken");
+    cookieValues.delete("refreshToken");
+    refreshedCookies = [];
   }
 
   let response: NextResponse;
-
   if (isPrivate && !authenticated) {
     response = NextResponse.redirect(new URL("/sign-in", request.url));
   } else if (isPublic && authenticated) {
     response = NextResponse.redirect(new URL("/", request.url));
   } else {
     const requestHeaders = new Headers(request.headers);
-    requestHeaders.set("cookie", cookieStore.toString());
-
-    response = NextResponse.next({
-      request: { headers: requestHeaders },
-    });
+    requestHeaders.set(
+      "cookie",
+      Array.from(cookieValues, ([name, value]) => `${name}=${value}`).join(
+        "; ",
+      ),
+    );
+    response = NextResponse.next({ request: { headers: requestHeaders } });
   }
 
-  for (const cookie of outgoingCookies) {
-    response.headers.append("Set-Cookie", cookie);
+  for (const cookie of refreshedCookies) {
+    const { name, value, ...options } = parseSetCookie(cookie);
+    if (value) response.cookies.set(name, value, options);
+  }
+  if (clearCookies) {
+    response.cookies.delete("accessToken");
+    response.cookies.delete("refreshToken");
   }
 
   return response;
