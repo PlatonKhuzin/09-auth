@@ -1,0 +1,13 @@
+.text {
+  text-align: center;
+  margin: 24px auto;
+  padding: 12px;
+  color: #084298;
+  background: #e8f4fd;
+  border-radius: 4px;
+  max-width: 600px;
+}
+.error {
+  color: #842029;
+  background: #f8d7da;
+}

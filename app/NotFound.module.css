@@ -1,0 +1,12 @@
+.main {
+  flex: 1;
+  padding: 64px 24px;
+  text-align: center;
+}
+.title {
+  font-size: 32px;
+  margin-bottom: 24px;
+}
+.description {
+  font-size: 18px;
+}
